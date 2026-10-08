@@ -23,6 +23,51 @@ pub fn tensor_type_tokens(rank: usize, dtype: &DType) -> TokenStream {
     }
 }
 
+/// The `DType` an argument is declared with, for use in a doc comment.
+///
+/// The Rust signature can't always carry the dtype (`Tensor<2>` is `Tensor<2, Int>` or
+/// `Tensor<2>` depending on the element type), so `forward` documents it instead. This keeps
+/// generated models honest about the ONNX types they were compiled from, matching the
+/// "always specify explicit dtypes" convention the rest of the codegen already follows for
+/// constants and boundary scalars.
+pub fn arg_dtype_doc(arg: &Argument) -> String {
+    let dtype = match &arg.ty {
+        ArgType::Tensor(tensor) => &tensor.dtype,
+        ArgType::ScalarNative(dtype) | ArgType::ScalarTensor(dtype) => dtype,
+        // A shape input is a host-side `[i64; N]`; it has no element dtype to pin.
+        ArgType::Shape(_) => return "shape ([i64; N])".into(),
+    };
+
+    match dtype {
+        DType::Bool(_) => "bool".into(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// `/// # Arguments` doc lines for a generated `forward`, one per argument.
+///
+/// Returns `None` when there is nothing to document, so the caller can omit the section
+/// entirely rather than emit an empty header.
+pub fn codegen_args_doc(args: &[Argument]) -> Option<TokenStream> {
+    if args.is_empty() {
+        return None;
+    }
+
+    let lines = args.iter().map(|arg| {
+        // Use the ONNX name, not `arg_ident`: the parameter the user sees in the
+        // signature is untagged, and the doc has to name the same thing.
+        let name = &arg.name;
+        let dtype = arg_dtype_doc(arg);
+        let doc = format!(" `{name}`: expected dtype `{dtype}`");
+        quote! { #[doc = #doc] }
+    });
+
+    Some(quote! {
+        /// # Arguments
+        #(#lines)*
+    })
+}
+
 /// Get the type TokenStream for an argument
 pub fn arg_type_tokens(arg: &Argument) -> TokenStream {
     match &arg.ty {
@@ -175,7 +220,41 @@ pub fn codegen_return_expr(outputs: &[Argument]) -> TokenStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use onnx_ir::ir::BoolStore;
+    use onnx_ir::ir::{BoolStore, TensorType};
+
+    fn tensor_arg(name: &str, rank: usize, dtype: DType) -> Argument {
+        Argument::new(name, ArgType::Tensor(TensorType::new(dtype, rank, None)))
+    }
+
+    #[test]
+    fn args_doc_documents_tensor_dtype() {
+        // A tensor's Rust signature carries the rank but not the element dtype, so the
+        // doc line is the only place the ONNX-declared dtype is visible.
+        let args = [
+            tensor_arg("audio", 3, DType::F32),
+            tensor_arg("ids", 2, DType::I64),
+        ];
+
+        let doc = codegen_args_doc(&args).unwrap().to_string();
+        assert!(doc.contains("expected dtype"), "{doc}");
+        assert!(doc.contains("`audio`: expected dtype `F32`"), "{doc}");
+        assert!(doc.contains("`ids`: expected dtype `I64`"), "{doc}");
+    }
+
+    #[test]
+    fn args_doc_names_bool_without_the_store_variant() {
+        let args = [tensor_arg("mask", 2, DType::Bool(BoolStore::Native))];
+
+        let doc = codegen_args_doc(&args).unwrap().to_string();
+        // `Bool(Native)` is a storage layout, not something a caller passes.
+        assert!(doc.contains("`mask`: expected dtype `bool`"), "{doc}");
+        assert!(!doc.contains("Native"), "{doc}");
+    }
+
+    #[test]
+    fn args_doc_is_omitted_when_there_are_no_inputs() {
+        assert!(codegen_args_doc(&[]).is_none());
+    }
 
     #[test]
     fn tensor_type_tokens_preserves_tensor_kind() {
