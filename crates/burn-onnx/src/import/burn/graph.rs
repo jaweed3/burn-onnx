@@ -1938,6 +1938,52 @@ mod tests {
     }
 
     #[test]
+    fn flat_forward_documents_input_dtypes() {
+        let graph = build_abs_chain(1);
+        let code = format_tokens(graph.codegen());
+
+        insta::assert_snapshot!(code, @r"
+        extern crate alloc;
+        use burn::prelude::*;
+        #[derive(Module, Debug)]
+        pub struct Model {
+            #[module(skip)]
+            device: Device,
+        }
+        impl Model {
+            #[allow(unused_variables)]
+            pub fn new(device: &Device) -> Self {
+                Self { device: device.clone() }
+            }
+            #[allow(clippy::let_and_return, clippy::approx_constant)]
+            /// # Arguments
+            /// - `input`: expected dtype `DType::F32`
+            pub fn forward(&self, input: Tensor<2>) -> Tensor<2> {
+                let t0 = input.abs();
+                t0
+            }
+        }
+        ");
+    }
+
+    #[test]
+    fn partitioned_forwards_document_input_dtypes() {
+        let graph = build_abs_chain(250);
+        let code = format_tokens(graph.codegen());
+
+        let doc = "/// # Arguments\n    /// - `input`: expected dtype `DType::F32`\n    pub fn forward(&self, input: Tensor<2>)";
+        assert!(
+            code.contains(doc),
+            "Model::forward is missing its doc:\n{code}"
+        );
+        // Submodules after the first take an intermediate tensor, not `input`.
+        assert!(
+            code.contains("/// - `t"),
+            "submodule forward is missing its doc:\n{code}"
+        );
+    }
+
+    #[test]
     fn large_graph_with_partition_disabled_uses_flat_codegen() {
         let graph = build_abs_chain(250);
         let code = format_tokens(graph.with_partition(false).codegen());

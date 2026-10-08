@@ -23,44 +23,39 @@ pub fn tensor_type_tokens(rank: usize, dtype: &DType) -> TokenStream {
     }
 }
 
-/// The `DType` an argument is declared with, for use in a doc comment.
+/// The dtype of an argument whose Rust type does not show it.
 ///
-/// The Rust signature can't always carry the dtype (`Tensor<2>` is `Tensor<2, Int>` or
-/// `Tensor<2>` depending on the element type), so `forward` documents it instead. This keeps
-/// generated models honest about the ONNX types they were compiled from, matching the
-/// "always specify explicit dtypes" convention the rest of the codegen already follows for
-/// constants and boundary scalars.
-pub fn arg_dtype_doc(arg: &Argument) -> String {
+/// `Tensor<2>` and `Tensor<2, Int>` name a kind, not a dtype: an I32 and an I64 input have
+/// the same signature. Native scalars, shapes and bool tensors are fully described by their
+/// type, so they return `None`.
+fn hidden_dtype(arg: &Argument) -> Option<&DType> {
     let dtype = match &arg.ty {
         ArgType::Tensor(tensor) => &tensor.dtype,
-        ArgType::ScalarNative(dtype) | ArgType::ScalarTensor(dtype) => dtype,
-        // A shape input is a host-side `[i64; N]`; it has no element dtype to pin.
-        ArgType::Shape(_) => return "shape ([i64; N])".into(),
+        ArgType::ScalarTensor(dtype) => dtype,
+        ArgType::ScalarNative(_) | ArgType::Shape(_) => return None,
     };
-
-    match dtype {
-        DType::Bool(_) => "bool".into(),
-        other => format!("{other:?}"),
-    }
+    (!dtype.is_bool()).then_some(dtype)
 }
 
-/// `/// # Arguments` doc lines for a generated `forward`, one per argument.
+/// `/// # Arguments` doc lines for a generated `forward`, one per argument whose dtype the
+/// signature hides.
 ///
-/// Returns `None` when there is nothing to document, so the caller can omit the section
-/// entirely rather than emit an empty header.
+/// Returns `None` when no argument needs one, so the caller omits the section entirely.
 pub fn codegen_args_doc(args: &[Argument]) -> Option<TokenStream> {
-    if args.is_empty() {
+    let lines: Vec<_> = args
+        .iter()
+        .filter_map(|arg| {
+            let dtype = hidden_dtype(arg)?;
+            // Use `arg.name`, not `arg_ident`: the `__arg_` tag on `arg_ident` is stripped
+            // from ident tokens only, so it would leak into the doc string.
+            let doc = format!(" - `{}`: expected dtype `DType::{dtype:?}`", arg.name);
+            Some(quote! { #[doc = #doc] })
+        })
+        .collect();
+
+    if lines.is_empty() {
         return None;
     }
-
-    let lines = args.iter().map(|arg| {
-        // Use the ONNX name, not `arg_ident`: the parameter the user sees in the
-        // signature is untagged, and the doc has to name the same thing.
-        let name = &arg.name;
-        let dtype = arg_dtype_doc(arg);
-        let doc = format!(" `{name}`: expected dtype `{dtype}`");
-        quote! { #[doc = #doc] }
-    });
 
     Some(quote! {
         /// # Arguments
@@ -236,19 +231,38 @@ mod tests {
         ];
 
         let doc = codegen_args_doc(&args).unwrap().to_string();
-        assert!(doc.contains("expected dtype"), "{doc}");
-        assert!(doc.contains("`audio`: expected dtype `F32`"), "{doc}");
-        assert!(doc.contains("`ids`: expected dtype `I64`"), "{doc}");
+        assert!(
+            doc.contains("- `audio`: expected dtype `DType::F32`"),
+            "{doc}"
+        );
+        assert!(
+            doc.contains("- `ids`: expected dtype `DType::I64`"),
+            "{doc}"
+        );
     }
 
     #[test]
-    fn args_doc_names_bool_without_the_store_variant() {
-        let args = [tensor_arg("mask", 2, DType::Bool(BoolStore::Native))];
+    fn args_doc_documents_scalar_tensor_dtype() {
+        // A `ScalarTensor` is a `Tensor<1, Int>` in the signature, which hides I32 vs I64.
+        let args = [Argument::new("n", ArgType::ScalarTensor(DType::I32))];
 
         let doc = codegen_args_doc(&args).unwrap().to_string();
-        // `Bool(Native)` is a storage layout, not something a caller passes.
-        assert!(doc.contains("`mask`: expected dtype `bool`"), "{doc}");
-        assert!(!doc.contains("Native"), "{doc}");
+        assert!(doc.contains("- `n`: expected dtype `DType::I32`"), "{doc}");
+    }
+
+    #[test]
+    fn args_doc_skips_args_whose_type_shows_the_dtype() {
+        let args = [
+            tensor_arg("mask", 2, DType::Bool(BoolStore::Native)),
+            Argument::new(
+                "flag",
+                ArgType::ScalarNative(DType::Bool(BoolStore::Native)),
+            ),
+            Argument::new("alpha", ArgType::ScalarNative(DType::F32)),
+            Argument::new("shape", ArgType::Shape(3)),
+        ];
+
+        assert!(codegen_args_doc(&args).is_none());
     }
 
     #[test]
