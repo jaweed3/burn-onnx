@@ -21,7 +21,10 @@ mod tests {
     #[test]
     fn compress_axis0_test() {
         let device = Default::default();
-        let model = compress_axis0::Model::new(&device);
+        let model = compress_axis0::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/compress_axis0.bpk"),
+            &device,
+        );
 
         let condition = Tensor::from_bool([false, true, true], &device);
 
@@ -34,7 +37,10 @@ mod tests {
     #[test]
     fn compress_axis1_test() {
         let device = Default::default();
-        let model = compress_axis1::Model::new(&device);
+        let model = compress_axis1::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/compress_axis1.bpk"),
+            &device,
+        );
 
         let condition = Tensor::from_bool([false, true], &device);
 
@@ -47,7 +53,10 @@ mod tests {
     #[test]
     fn compress_negative_axis_test() {
         let device = Default::default();
-        let model = compress_negative_axis::Model::new(&device);
+        let model = compress_negative_axis::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/compress_negative_axis.bpk"),
+            &device,
+        );
 
         let condition = Tensor::from_bool([false, true], &device);
 
@@ -61,7 +70,10 @@ mod tests {
     #[test]
     fn compress_default_axis_test() {
         let device = Default::default();
-        let model = compress_default_axis::Model::new(&device);
+        let model = compress_default_axis::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/compress_default_axis.bpk"),
+            &device,
+        );
 
         // The condition is shorter than the 6 flattened elements, which the spec
         // allows: the trailing element is simply never selected.
@@ -76,7 +88,10 @@ mod tests {
     #[test]
     fn compress_3d_test() {
         let device = Default::default();
-        let model = compress_3d::Model::new(&device);
+        let model = compress_3d::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/compress_3d.bpk"),
+            &device,
+        );
 
         let input = Tensor::<3>::from_floats(
             [
@@ -107,7 +122,10 @@ mod tests {
     #[test]
     fn compress_int64_test() {
         let device = Default::default();
-        let model = compress_int64::Model::new(&device);
+        let model = compress_int64::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/compress_int64.bpk"),
+            &device,
+        );
 
         let input = Tensor::<2, Int>::from_data(
             TensorData::from([[1i64, 2], [3, 4], [5, 6]]),
@@ -127,7 +145,10 @@ mod tests {
     #[test]
     fn compress_all_false_test() {
         let device = Default::default();
-        let model = compress_all_false::Model::new(&device);
+        let model = compress_all_false::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/compress_all_false.bpk"),
+            &device,
+        );
 
         let condition = Tensor::from_bool([false, false, false], &device);
 

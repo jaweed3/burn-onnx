@@ -73,6 +73,14 @@ impl NodeProcessor for CompressProcessor {
             }
         };
 
+        // Spec requires rank r >= 1. A rank-0 input has no axis to compress
+        // along, and flattening it would silently promote it to rank 1.
+        if rank == 0 {
+            return Err(ProcessError::Custom(
+                "Compress requires an input of rank >= 1, got a scalar".to_string(),
+            ));
+        }
+
         match &node.inputs[1].ty {
             ArgType::Tensor(condition) => {
                 if condition.rank != 1 {
@@ -250,6 +258,26 @@ mod tests {
         let prefs = OutputPreferences::new();
         let err = processor.infer_types(&mut node, 16, &prefs).unwrap_err();
         assert!(matches!(err, ProcessError::Custom(_)));
+    }
+
+    #[test]
+    fn test_compress_input_must_have_rank_at_least_1() {
+        // Spec requires r >= 1; a scalar has no axis to compress along.
+        for axis in [None, Some(0)] {
+            let mut builder = TestNodeBuilder::new(NodeType::Compress, "test_compress")
+                .input_tensor_f32("input", 0, None)
+                .input_tensor_bool("condition", 1, Some(vec![1]))
+                .output_tensor_f32("output", 1, None);
+            if let Some(axis) = axis {
+                builder = builder.attr_int("axis", axis);
+            }
+            let mut node = builder.build();
+
+            let processor = CompressProcessor;
+            let prefs = OutputPreferences::new();
+            let err = processor.infer_types(&mut node, 16, &prefs).unwrap_err();
+            assert!(matches!(err, ProcessError::Custom(_)), "axis={axis:?}");
+        }
     }
 
     #[test]
